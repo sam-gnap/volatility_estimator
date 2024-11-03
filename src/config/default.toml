@@ -1,0 +1,19 @@
+[volatility]
+cex_weight = 0.7
+dex_weight = 0.3
+rolling_window = 21600  # 6 hours in seconds
+sampling_interval = 60  # 1 minute in seconds
+annualization_factor = 525600.0
+
+[data_sources.uniswap]
+pool_address = "0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8"
+websocket_url = "wss://mainnet.infura.io/ws/v3/${INFURA_PROJECT_ID}"
+abi_path = "contracts/uniswap_abi.json"
+
+[data_sources.kraken]
+currency_pair = "ETH/USD"
+
+[storage]
+csv_directory = "data"
+max_file_size = 104857600
+compress_old_files = true

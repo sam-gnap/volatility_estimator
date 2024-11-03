@@ -1,0 +1,6 @@
+[data_sources]
+websocket_url = "wss://eth-goerli.g.alchemy.com/v2/${ALCHEMY_API_KEY}"
+uniswap_pool_address = "0x_TESTNET_POOL_ADDRESS"
+
+[storage]
+csv_directory = "data/dev"

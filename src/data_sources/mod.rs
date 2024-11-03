@@ -1,3 +1,5 @@
-//data_sources/mod.rs
-pub mod dex;
+pub mod traits;
 pub mod cex;
+pub mod dex;
+
+pub use traits::{PriceSource, TradeSource};

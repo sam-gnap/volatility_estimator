@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, fs};
+use std::fs;
 use futures::StreamExt;
 use web3::{
     contract::Contract,
@@ -10,11 +10,15 @@ use web3::{
 use anyhow::{Result};
 use tracing::{info, error, instrument};
 use chrono::{DateTime, TimeZone, Utc};
-use crate::io::{append_to_csv, append_vwap_to_csv, StandardizedTrade};
+use crate::io::{append_to_csv, append_vwap_to_csv};
+use crate::types::StandardizedTrade;
+use crate::config::AppConfig;
 use crate::processors::vwap::VWAPCalculator;
 use tokio::sync::mpsc;
-// I do not get how there imports work sometime!
+// I do not get how there imports work sometimes!
 use crate::PriceUpdate;
+use crate::processors::cleaning::DataCleaner;
+
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct Block {
@@ -43,17 +47,19 @@ pub struct UniswapHandler {
     web3: Web3<WebSocket>,
     contract_address: H160,
     swap_event: Event,
+    config: AppConfig,
 }
 
 impl UniswapHandler {
-    pub async fn new(websocket_url: &str, pool_address: &str, path_abi: &str) -> Result<Self> {
-        let web3 = Web3::new(WebSocket::new(websocket_url).await?);
+    pub async fn new(config: &AppConfig) -> Result<Self> {
+        info!("Using websocket URL: {}", config.data_sources.uniswap.websocket_url);
+        let web3 = Web3::new(WebSocket::new(&config.data_sources.uniswap.websocket_url).await?);
 
         let contract_address = H160::from_slice(
-            &hex::decode(pool_address).unwrap()[..]
+            &hex::decode(&config.data_sources.uniswap.pool_address).unwrap()[..]
         );
 
-        let abi_contents = fs::read(path_abi)?;
+        let abi_contents = fs::read(&config.data_sources.uniswap.abi_path)?;
 
         let contract = Contract::from_json(
             web3.eth(),
@@ -67,12 +73,19 @@ impl UniswapHandler {
             web3,
             contract_address,
             swap_event,
+            config: config.clone(),
         })
     }
 
     pub async fn start_listening_with_sender(&self, price_tx: mpsc::Sender<PriceUpdate>) -> Result<()> {
         info!("Starting Uniswap handler with price updates");
         let mut calculator = VWAPCalculator::new("uniswap");
+        let mut cleaner = DataCleaner::new(
+            self.config.cleaning.mean_window,
+            self.config.cleaning.std_dev_threshold,
+            self.config.cleaning.min_volume,
+            self.config.cleaning.max_volume,
+        );
         let mut block_stream = self.web3.eth_subscribe().subscribe_new_heads().await?;
         let swap_event_signature = self.swap_event.signature();
 
@@ -89,9 +102,11 @@ impl UniswapHandler {
                                 qty: log.amount1,
                                 price: log.price_inverted,
                             })
+                            .filter(|trade| cleaner.clean_trade(trade))
                             .collect();
 
                         // Write raw trades to CSV
+                        // Probably better to switch this off if we do not want to use for validation or use sql
                         if let Err(e) = append_to_csv(&standardized_trades, "data/uniswap_trades.csv") {
                             error!("Failed to write trades to CSV: {}", e);
                             continue;
@@ -168,7 +183,7 @@ impl UniswapHandler {
                     data: log.data.0,
                 })?;
 
-            let mut log = self.parse_log(parsed);
+            let log = self.parse_log(parsed);
             parsed_logs.push(log);
         }
 
@@ -176,8 +191,6 @@ impl UniswapHandler {
     }
 
     fn parse_log(&self, log: Log) -> ParsedLog {
-        let DECIMAL_0 = 6;
-        let DECIMAL_1 = 18;
         let sender = address_to_string(log.params[0].value.clone().into_address().unwrap());
         let recipient = address_to_string(log.params[1].value.clone().into_address().unwrap());
         let amount0 = log.params[2].value.clone().into_int().unwrap();
@@ -185,7 +198,7 @@ impl UniswapHandler {
 
         let sqrt_price_x96 = log.params[4].value.clone().into_uint().unwrap();
         let price_unadjusted = calculate_price_from_sqrt_x96(sqrt_price_x96);
-        let price = adjust_price_by_decimals(DECIMAL_0, DECIMAL_1, price_unadjusted);
+        let price = adjust_price_by_decimals(self.config.data_sources.uniswap.decimal_token0,self.config.data_sources.uniswap.decimal_token1,price_unadjusted);
         let price_inverted = 1.0 / price;
         let liquidity = log.params[5].value.clone().into_uint().unwrap();
         let tick = log.params[6].value.clone().into_int().unwrap();

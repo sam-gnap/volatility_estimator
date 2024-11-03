@@ -1,24 +1,49 @@
 use dotenv::dotenv;
 use anyhow::Result;
-use futures::StreamExt;
 use tokio::sync::{mpsc, Mutex};
 
 mod io;
 use std::sync::Arc;
 use tracing::{info, error};
 mod processors;
-mod data_sources;  // change from pub mod to mod
-mod volatility;    // change from pub mod to mod
-mod types;         // add this if not there already
+mod data_sources;
+mod volatility;
+mod types;
+mod config;
 
-// Use local crate references:
+
 use crate::{
     data_sources::dex::uniswap::UniswapHandler,
     data_sources::cex::kraken::run_kraken_with_sender,
-    volatility::estimator::{VolatilityProcessor, VolatilityConfig, ReturnType},
+    volatility::estimator::VolatilityProcessor,
     types::PriceUpdate,
+    config::AppConfig
 };
 use crate::io::append_volatility_to_csv;
+
+
+async fn run_uniswap_with_sender(
+    config: Arc<AppConfig>,
+    price_tx: mpsc::Sender<PriceUpdate>,
+) -> Result<()> {
+    info!("Initializing Uniswap handler...");
+
+    let uniswap_handler = match UniswapHandler::new(&config).await {
+        Ok(handler) => handler,
+        Err(e) => {
+            error!("Failed to initialize Uniswap handler: {}", e);
+            return Err(e.into());
+        }
+    };
+
+    info!("Starting Uniswap listener...");
+    match uniswap_handler.start_listening_with_sender(price_tx).await {
+        Ok(_) => info!("Uniswap listener completed successfully"),
+        Err(e) => error!("Uniswap listener failed: {}", e),
+    }
+
+    Ok(())
+}
 
 struct SharedState {
     volatility_processor: Mutex<VolatilityProcessor>,
@@ -27,6 +52,7 @@ struct SharedState {
 async fn run_volatility_processor(
     mut price_rx: mpsc::Receiver<PriceUpdate>,
     shared_state: Arc<SharedState>,
+    config: Arc<AppConfig>,
 ) {
     let mut latest_kraken = None;
     let mut latest_uniswap = None;
@@ -43,7 +69,6 @@ async fn run_volatility_processor(
             }
         }
 
-        // Use the most recent timestamp from either source
         let current_timestamp = match (&latest_kraken, &latest_uniswap) {
             (Some((t1, _)), Some((t2, _))) => *t1.max(t2),
             (Some((t, _)), None) => *t,
@@ -51,93 +76,73 @@ async fn run_volatility_processor(
             (None, None) => continue,
         };
 
-        if let Some(estimate) = processor.process_vwaps(
+        let estimates = processor.process_vwaps(
             current_timestamp,
             latest_kraken.map(|(_, p)| p),
             latest_uniswap.map(|(_, p)| p),
-        ) {
+        );
+
+        for estimate in estimates {
             info!(
-                "New volatility estimate: {:.4}% ({} observations)",
+                "New volatility estimate for window {}: {:.4}% ({} observations)",
+                estimate.window_name,
                 estimate.volatility * 100.0,
                 estimate.num_observations
             );
 
-            // You could write this to a CSV or handle it as needed
-            if let Err(e) = append_volatility_to_csv(&estimate, "data/volatility.csv") {
-                error!("Failed to write volatility estimate: {}", e);
+            let volatility_path = config.output.data_dir
+                .join(&config.output.volatility_file);
+
+            if let Err(e) = append_volatility_to_csv(&estimate, volatility_path.to_str().unwrap()) {
+                error!(
+                    window = %estimate.window_name,
+                    error = %e,
+                    "Failed to write volatility estimate"
+                );
             }
         }
     }
 }
 
-
-async fn run_uniswap_with_sender(
-    websocket_url: String,
-    pool_address: String,
-    path_abi: String,
-    price_tx: mpsc::Sender<PriceUpdate>,
-) -> Result<()> {
-    let uniswap_handler = UniswapHandler::new(
-        &websocket_url,
-        &pool_address,
-        &path_abi
-    ).await?;
-
-    // Modify UniswapHandler to accept a price sender
-    uniswap_handler.start_listening_with_sender(price_tx).await?;
-
-    Ok(())
-}
-
-
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize environment variables
     dotenv().ok();
-
-    // Setup tracing for better logging
     tracing_subscriber::fmt::init();
 
-    // Get configuration
-    let path_abi = "/Users/gnapsamuel/Documents/AMM/volatility_estimator/src/contracts/uniswap_abi.json";
-    let pool_address = std::env::var("UNISWAP_POOL_ADDRESS")?;
-    let websocket_infura_endpoint = std::env::var("INFURA_WEBSOCKET")?;
-
-    let config = VolatilityConfig {
-        cex_weight: 0.7,
-        dex_weight: 0.3,
-        rolling_window: chrono::Duration::hours(6),
-        sampling_interval: chrono::Duration::minutes(1),
-        annualization_factor: 525600.0,
-        return_type: ReturnType::LogReturns,
-    };
-
-    let processor = VolatilityProcessor::new(config);
+    let config = Arc::new(AppConfig::load()?);
+    let processor = VolatilityProcessor::new(config.volatility.clone());
     let shared_state = Arc::new(SharedState {
         volatility_processor: Mutex::new(processor),
     });
+    info!(
+        "INFURA_WEBSOCKET: {}",
+        std::env::var("INFURA_WEBSOCKET").unwrap_or_else(|_| "NOT SET".to_string())
+    );
+    info!(
+        "UNISWAP_POOL_ADDRESS: {}",
+        std::env::var("UNISWAP_POOL_ADDRESS").unwrap_or_else(|_| "NOT SET".to_string())
+    );
 
-    // Create channel for price updates
+
+    let config_volatility = Arc::clone(&config);
+    let config_uniswap = Arc::clone(&config);
+    let config_kraken = Arc::clone(&config);
+
     let (price_tx, price_rx) = mpsc::channel(100);
     let price_tx_kraken = price_tx.clone();
     let price_tx_uniswap = price_tx;
 
-    // Spawn handlers
     let volatility_handle = tokio::spawn(run_volatility_processor(
         price_rx,
         shared_state.clone(),
+        config_volatility,
     ));
-
-    let kraken_handle = tokio::spawn(run_kraken_with_sender(price_tx_kraken));
-
+    let kraken_handle = tokio::spawn(run_kraken_with_sender(price_tx_kraken, config_kraken));
     let uniswap_handle = tokio::spawn(run_uniswap_with_sender(
-        websocket_infura_endpoint,
-        pool_address,
-        path_abi.to_string(),
+        config_uniswap,
         price_tx_uniswap,
     ));
 
-    // Wait for all handlers
     let _ = tokio::join!(volatility_handle, kraken_handle, uniswap_handle);
 
     Ok(())

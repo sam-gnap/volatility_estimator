@@ -1,8 +1,9 @@
-// src/lib.rs
-pub mod volatility;  // This needs to come first
+pub mod volatility;
 pub mod data_sources;
 pub mod types;
 pub mod processors;
 pub mod io;
-pub use types::PriceUpdate;
+pub mod config;
+
+pub use types::{PriceUpdate, StandardizedTrade};
 pub use volatility::estimator::VolatilityEstimate;

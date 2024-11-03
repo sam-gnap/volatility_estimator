@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
-use chrono::{DateTime, Duration, TimeZone, Utc};
-use crate::io::{StandardizedTrade, VWAPData};
+use chrono::{DateTime, TimeZone, Utc};
+use crate::io::VWAPData;
+use crate::types::StandardizedTrade;
 
 #[derive(Debug)]
 pub struct MinuteBar {
@@ -16,6 +17,7 @@ pub struct VWAPCalculator {
     current_bar: MinuteBar,
     historical_bars: BTreeMap<DateTime<Utc>, f64>,
     source: String,
+    last_known_vwap: Option<f64>,
 }
 
 impl MinuteBar {
@@ -44,6 +46,7 @@ impl VWAPCalculator {
             current_bar: MinuteBar::new(start_time, source.to_string()),
             historical_bars: BTreeMap::new(),
             source: source.to_string(),
+            last_known_vwap: None,
         }
     }
 
@@ -61,15 +64,25 @@ impl VWAPCalculator {
 
             // If trade belongs to a new minute
             if bar_start > self.current_bar.start_time {
-                // Complete current bar if it has trades
                 if self.current_bar.volume_sum > 0.0 {
                     let vwap = self.current_bar.volume_price_sum / self.current_bar.volume_sum;
                     self.historical_bars.insert(self.current_bar.start_time, vwap);
+                    self.last_known_vwap = Some(vwap);  // Update last known VWAP
                     completed_bar = Some(VWAPData {
                         start_time: self.current_bar.start_time,
                         source: self.current_bar.source.clone(),
                         vwap,
                         trade_count: self.current_bar.trade_count,
+                        is_filled_forward: false
+                    });
+                } else if let Some(last_vwap) = self.last_known_vwap {
+                    // If no trades use last known vwap
+                    completed_bar = Some(VWAPData {
+                        start_time: self.current_bar.start_time,
+                        source: self.current_bar.source.clone(),
+                        vwap: last_vwap,
+                        trade_count: 0,
+                        is_filled_forward: true
                     });
                 }
                 // Start new bar
@@ -81,12 +94,5 @@ impl VWAPCalculator {
 
         completed_bar
     }
-
-    // fn get_latest_prices(&self, window: Duration) -> Vec<(DateTime<Utc>, f64)> {
-    //     let cutoff = Utc::now() - window;
-    //     self.historical_bars
-    //         .range(cutoff..)
-    //         .map(|(k, v)| (*k, *v))
-    //         .collect()
-    // }
 }
+

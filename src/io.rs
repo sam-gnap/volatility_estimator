@@ -3,15 +3,7 @@ use anyhow::Result;
 use kraken_ws_client::api::{Trade, TradeEvent};
 use chrono::{DateTime, Utc};
 use crate::volatility::estimator::VolatilityEstimate;
-
-#[derive(Debug)]
-pub struct StandardizedTrade {
-    pub timestamp: DateTime<Utc>,
-    pub source: String,
-    // pub side: String,
-    pub qty: f64,
-    pub price: f64,
-}
+use crate::types::StandardizedTrade;
 
 #[derive(Debug)]
 pub struct VWAPData {
@@ -19,9 +11,9 @@ pub struct VWAPData {
     pub source: String,
     pub vwap: f64,
     pub trade_count: u32,
+    pub is_filled_forward: bool,
 }
 
-// Conversion from Kraken TradeEvent to StandardizedTrade
 impl From<&Trade> for StandardizedTrade {
     fn from(trade: &Trade) -> Self {
         let timestamp = DateTime::parse_from_rfc3339(&trade.timestamp)
@@ -83,11 +75,6 @@ pub fn append_to_csv(trades: &[StandardizedTrade], file_path: &str) -> Result<()
     Ok(())
 }
 
-// Helper function for single trade
-// pub fn append_single_trade_to_csv(trade: &StandardizedTrade, file_path: &str) -> Result<()> {
-//     append_to_csv(std::slice::from_ref(trade), file_path)
-// }
-
 pub fn append_volatility_to_csv(estimate: &VolatilityEstimate, file_path: &str) -> Result<()> {
     if let Some(parent) = Path::new(file_path).parent() {
         std::fs::create_dir_all(parent)?;
@@ -107,6 +94,7 @@ pub fn append_volatility_to_csv(estimate: &VolatilityEstimate, file_path: &str) 
     if !file_exists {
         wtr.write_record(&[
             "timestamp",
+            "window_name",
             "volatility",
             "num_observations",
             "window_start",
@@ -116,6 +104,7 @@ pub fn append_volatility_to_csv(estimate: &VolatilityEstimate, file_path: &str) 
 
     wtr.write_record(&[
         &estimate.timestamp.to_rfc3339(),
+        &estimate.window_name,
         &estimate.volatility.to_string(),
         &estimate.num_observations.to_string(),
         &estimate.window_start.to_rfc3339(),
@@ -127,7 +116,6 @@ pub fn append_volatility_to_csv(estimate: &VolatilityEstimate, file_path: &str) 
 }
 
 pub fn append_vwap_to_csv(vwap_data: &VWAPData, file_path: &str) -> Result<()> {
-    // Create directory if it doesn't exist
     if let Some(parent) = Path::new(file_path).parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -149,6 +137,7 @@ pub fn append_vwap_to_csv(vwap_data: &VWAPData, file_path: &str) -> Result<()> {
             "source",
             "vwap",
             "trade_count",
+            "filled_forward"
         ])?;
     }
 
@@ -157,6 +146,7 @@ pub fn append_vwap_to_csv(vwap_data: &VWAPData, file_path: &str) -> Result<()> {
         &vwap_data.source,
         &vwap_data.vwap.to_string(),
         &vwap_data.trade_count.to_string(),
+        &vwap_data.is_filled_forward.to_string(),
     ])?;
 
     wtr.flush()?;

@@ -1,3 +1,66 @@
+# Setup Guide
+
+
+## Environment Variables
+Create a `.env` file in the root directory with:
+```bash
+INFURA_WEBSOCKET=wss://mainnet.infura.io/ws/v3/YOUR_PROJECT_ID
+UNISWAP_POOL_ADDRESS=0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640  # USDC/ETH 0.05%
+```
+
+## Installation
+```bash
+
+# Install dependencies
+cargo build
+```
+
+## Configuration
+The project uses a TOML configuration file located at `src/config/config.toml`. You can modify:
+- Window sizes for volatility calculation
+- Exchange weights (CEX/DEX ratio)
+- Cleaning parameters
+- Output paths
+
+Default config looks like:
+```toml
+[volatility]
+cex_weight = 0.7
+dex_weight = 0.3
+windows = [
+    { name = "micro", length_seconds = 300, sampling_interval = 60 },    # 5 mins
+    { name = "short", length_seconds = 1800, sampling_interval = 60 },   # 30 mins
+    { name = "daily", length_seconds = 86400, sampling_interval = 300 }, # 24 hrs
+]
+
+[cleaning]
+mean_window = 100
+std_dev_threshold = 3.0
+min_volume = 0.0001
+max_volume = 1000.0
+```
+
+## Running
+```bash
+
+# Run the project
+cargo run
+
+# The program will output several CSV files in the data/ directory:
+# - kraken_trades.csv
+# - uniswap_trades.csv
+# - volatility.csv
+```
+
+## Monitoring
+The application uses tracing for logging
+- WebSocket connection status
+- Trade processing
+- Volatility calculations
+- Any errors or warnings
+
+
+  
 # ETH/USDC Volatility Estimator
 
 Real-time volatility estimation is crucial for market making operations, where understanding price dynamics helps in setting optimal spreads and managing risk. This project implements a volatility estimator that combines on-chain and off-chain data sources to provide a view of ETH/USDC volatility.

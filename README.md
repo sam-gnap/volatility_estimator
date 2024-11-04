@@ -1,4 +1,4 @@
-# Setup Guide
+# 1. Setup Guide
 
 
 ## Environment Variables
@@ -60,8 +60,10 @@ The application uses tracing for logging
 - Any errors or warnings
 
 
+
+
   
-# ETH/USDC Volatility Estimator
+# 2. ETH/USDC Volatility Estimator
 
 Real-time volatility estimation is crucial for market making operations, where understanding price dynamics helps in setting optimal spreads and managing risk. This project implements a volatility estimator that combines on-chain and off-chain data sources to provide a view of ETH/USDC volatility.
 

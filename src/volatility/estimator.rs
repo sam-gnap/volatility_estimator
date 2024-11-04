@@ -19,7 +19,7 @@ pub struct VolatilityEstimate {
     pub num_observations: usize,
     pub window_start: DateTime<Utc>,
     pub window_end: DateTime<Utc>,
-    pub window_name: String,  // Added this field
+    pub window_name: String,
 }
 
 pub struct VolatilityProcessor {
@@ -76,7 +76,7 @@ impl WindowProcessor {
             self.returns.push_back(return_value);
         }
 
-        // Calculate volatility
+        // Calculate vol
         let volatility = self.calculate_volatility();
 
         self.last_calculation = Some(current_time);
@@ -87,7 +87,7 @@ impl WindowProcessor {
             num_observations: self.returns.len(),
             window_start: window_start,
             window_end: current_time,
-            window_name: self.name.clone(), // Add this to VolatilityEstimate
+            window_name: self.name.clone(),
         })
     }
 
@@ -101,7 +101,7 @@ impl WindowProcessor {
     }
 
     fn annualization_factor(&self) -> f64 {
-        // Calculate based on sampling interval
+        // Calc based on sampling int
         (365.0 * 24.0 * 60.0 * 60.0) / self.sampling_interval.num_seconds() as f64
     }
 }
@@ -129,6 +129,7 @@ impl VolatilityProcessor {
         dex_vwap: Option<f64>,
     ) -> Vec<VolatilityEstimate> {
         // Calculate weighted price as before
+        // we use larger weight for cex as price discovery is happening there
         let weighted_price = match (cex_vwap, dex_vwap) {
             (Some(cex), Some(dex)) => {
                 (cex * self.config.cex_weight + dex * self.config.dex_weight)
@@ -139,13 +140,13 @@ impl VolatilityProcessor {
             (None, None) => return vec![],
         };
 
-        // Store the 1-minute data
+        // Store 1-min VWAP
         self.price_history.insert(timestamp, weighted_price);
 
-        // Clean old data
+        // Clean old data, prob better to push old data to sql
         self.clean_old_data();
 
-        // Calculate volatility for each window
+        // Calculate vol for each window
         let mut estimates = Vec::new();
         for processor in self.window_processors.values_mut() {
             if let Some(estimate) = processor.process_window(&self.price_history, timestamp) {
@@ -161,7 +162,7 @@ impl VolatilityProcessor {
         let max_length = self.config.windows.iter()
             .map(|w| w.length_seconds)
             .max()
-            .unwrap_or(21600); // 6 hours default
+            .unwrap_or(self.config.data_retention_seconds);
 
         let cutoff = Utc::now() - Duration::seconds(max_length);
         self.price_history.retain(|&k, _| k >= cutoff);

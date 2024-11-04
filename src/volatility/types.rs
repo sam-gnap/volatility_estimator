@@ -16,12 +16,8 @@ pub struct VolatilityWindow {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct VolatilityConfig {
-    #[serde(default = "default_cex_weight")]
     pub cex_weight: f64,
-    #[serde(default = "default_dex_weight")]
     pub dex_weight: f64,
     pub windows: Vec<VolatilityWindow>,
+    pub data_retention_seconds: i64,
 }
-
-fn default_cex_weight() -> f64 { 0.7 }
-fn default_dex_weight() -> f64 { 0.3 }

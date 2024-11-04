@@ -5,6 +5,7 @@
 abi_path = "src/contracts/uniswap_abi.json"
 decimal_token0 = 6  # USDC decimals
 decimal_token1 = 18 # ETH decimals
+data_retention_seconds = 21600 #we specify 6 hours as default
 
 [data_sources.kraken]
 trading_pair = "ETH/USD"

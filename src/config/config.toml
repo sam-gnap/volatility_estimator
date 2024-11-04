@@ -1,11 +1,10 @@
 [data_sources.uniswap]
-# Please set these in .env
+# Set these in .env
  pool_address = ""
  websocket_url = ""
 abi_path = "src/contracts/uniswap_abi.json"
 decimal_token0 = 6  # USDC decimals
 decimal_token1 = 18 # ETH decimals
-data_retention_seconds = 21600 #we specify 6 hours as default
 
 [data_sources.kraken]
 trading_pair = "ETH/USD"
@@ -40,3 +39,5 @@ windows = [
     { name = "short", length_seconds = 1800, sampling_interval = 60 },   # 30 mins
     { name = "daily", length_seconds = 86400, sampling_interval = 300 }, # 24 hrs
 ]
+
+data_retention_seconds = 21600 #we specify 6 hours as default

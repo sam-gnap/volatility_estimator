@@ -1,70 +1,63 @@
+# ETH/USDC Volatility Estimator
 
-  
-# 1. ETH/USDC Volatility Estimator
-
-Real-time volatility estimation is crucial for market making operations, where understanding price dynamics helps in setting optimal spreads and managing risk. This project implements a volatility estimator that combines on-chain and off-chain data sources to provide a view of ETH/USDC volatility.
+Real-time volatility estimation matters for market making, where understanding price dynamics drives spread setting and risk management. This project implements a volatility estimator in Rust that fuses on-chain and off-chain data sources into a single view of ETH/USDC volatility.
 
 ## Technical approach
 
 ### Data sources
-We use web-socket feeds to listen to both CEX and DEX. Latency or anything related to that was not considered and thus this could be something to improve on. 
-- CEX we use kraken as I couldn't make verification for Binance, not sure why..
-- DEX we use the most liquid pool and use Infura. 
-- For both exchanges we take both sides, but since we are smoothing data, this does not affect prices that much. 
+Websocket feeds listen to both a CEX and a DEX in real time:
+- **CEX**: Kraken trade feed (ETH/USD).
+- **DEX**: the most liquid Uniswap v3 pool (USDC/ETH 0.05%), via an Infura websocket.
+- Both sides of the book are taken from each venue; since prices are smoothed downstream, this has little effect on the estimates.
+- Latency is not modelled — a known area for improvement.
 
 ### Pipeline
 
 #### Data collection
-- Saving raw feed is good for auditing of calcs but costly long-term storage-wise (especially to csv) therefore we could use a sql and purge after some time for example
-- To normalise the feeds, we use WVAP to get 1-min prices and combine these between exchanges.
-  - Here we use 70/30 ratio in favour of CEX as price discovery happens there, this could be noisy so this should be re-thought.  
-  - A better approach could be to collect WVAP or dollar bars for at least 5-min prices to mitigate noise. 
-  - Further, we implicitly ignore fee difference between DEX and CEX
+- Raw feeds are persisted for auditability. CSV is fine for an MVP but costly long-term; a SQL store with periodic purging would be the natural next step.
+- Feeds are normalised with VWAP to 1-minute prices and combined across exchanges.
+  - The blend weights CEX 70/30 over DEX, since price discovery happens mostly on the CEX. The ratio is configurable and worth re-examining.
+  - A better approach could collect VWAP or dollar bars at 5-minute resolution to mitigate noise.
+  - Fee differences between DEX and CEX are implicitly ignored.
 
 #### Cleaning
-- We clean observations tick-by-tick as prices may be contaminated by wrongly reported observations.
-- Suggested by Barndorff-Nielsen et al. [1], we start by removing all those transactions associated with zero or negative volume. We extend this cleaning by also using max volume (arbitrary).
-- We use a simplified version of the methodology of Brownlees and Gallo [2] to filter out ticks where prices is 3 stds away based on rolling average/std of prices.  
+- Observations are cleaned tick-by-tick, since prices may be contaminated by wrongly reported trades.
+- Following Barndorff-Nielsen et al. [1], transactions with zero or negative volume are removed, extended with a (configurable) max-volume filter.
+- A simplified version of Brownlees and Gallo [2] filters out ticks more than 3 standard deviations from a rolling mean.
 
 #### Processing
-- After using WVAP price (only 1 min) we can calculate volatility on sliding windows. These are configurable and can be set to multiple different windows to account for micro, short, daily etc. volatility windows. 
-- However (!), in a better version one would use different calculations to re-sample more sparse prices and use different techniques for each of the above window
-  - For example, for hourly and daily frequency we could use VWAP (or VWMP) from 1-minute bars where we would calculate time-weighted average price, as used by coinmetrics [3]
-    - The weight function assigns a weight of 0 percent to the first time interval, subsequent time intervals are assigned a weight that increases linearly, and the last two time intervals are assigned a weight of 5 percent such that the sum of all weights equals 100 percent. The weight function assigns more weight to time slices that are closer to the Calculation Time. 
+- Realised volatility is computed on sliding windows over the 1-minute VWAP prices. Windows are configurable, so micro, short, and daily volatility can run side by side.
+- A more complete version would resample differently per horizon: for hourly and daily frequencies, a time-weighted VWAP from 1-minute bars — as used by Coin Metrics [3] — where weights increase linearly toward the calculation time.
 
-### Results:
-- Realised volatility of the windows we choose gets written out to csv
+### Output
+Realised volatility for each configured window is written to CSV.
 
-## Limitations and Future improvements
-- The volatility computed with very short time intervals (1 minute) is no longer an unbiased and consistent estimator of the daily volatility computed with daily returns 
-  - this is why we mentioned different techniques to resample the prices 
-  - i.e. variance reduction considerations suggest using very high frequency returns while on the other hand, the bias generated by microstructure effects imposes a reduction of the sampling frequency.
-- Since as a market maker we want to predict, or at least have a confident expectation of future volatility, IV would be a very relevant. 
-- Futures markets should be considered as there are a few papers suggesting that price discovery may be happening there
-- Liquidations seem to have some predictive power for volatility, those could be used as well [4]
-- Tests are an important part of every bigger project, but I chose to ignore them for an MVP 
+## Limitations and future improvements
+- Volatility computed from very short intervals (1 minute) is not an unbiased, consistent estimator of daily volatility: variance-reduction arguments favour high-frequency returns, while microstructure noise pushes toward lower sampling frequencies. Per-horizon resampling (above) is the fix.
+- A market maker ultimately wants *expected future* volatility — implied volatility would be a highly relevant addition.
+- Futures markets are worth adding; several papers suggest price discovery partly happens there.
+- Liquidations appear to have predictive power for volatility [4].
+- Multiple CEXs would help account for intra-day and intra-week seasonality (e.g. Coinbase follows US trading activity).
+- Tests are skipped in this MVP.
 
-### Previously mentioned
-- Multiple CEX could be good to account for seasonality and price discovery fluctuations. E.g Intra-day seasonality and intra-weekly seasonality on coinbase follows the US trading activity. 
-- I assume we do not need to consider exchange downtime.
-- I assume we do not need to handle market disruptions (black Monday) and can assume outliers handled by simple cleaning filter? 
-- I assume we do not need to account for Gaussianity of data
+### Scope assumptions
+- Exchange downtime is not handled.
+- Market disruptions (flash crashes) are assumed to be caught by the cleaning filters.
+- No Gaussianity assumptions are made about returns.
 
 ## References
 
 [1] Barndorff-Nielsen, O., Hansen, P. R., Lunde, A., & Shephard, N. (2009). Realized kernels in practice: trades and quotes. *Econometrics Journal*, 12, C1–C32.
 
-[2] Brownlees, C. T., & Gallo, G. M. (2006). Financial econometric analysis at ultra-high frequency: Data handling concerns. *Computational Statistics & Data Analysis*, 51, 2232–245.
+[2] Brownlees, C. T., & Gallo, G. M. (2006). Financial econometric analysis at ultra-high frequency: Data handling concerns. *Computational Statistics & Data Analysis*, 51, 2232–2245.
 
-[3] Coin Metrics. (2024). Single Asset Series Methodology. Retrieved from https://coinmetrics.io/wp-content/uploads/2024/10/cmbi-single-asset-methodology.pdf
+[3] Coin Metrics. (2024). Single Asset Series Methodology. https://coinmetrics.io/wp-content/uploads/2024/10/cmbi-single-asset-methodology.pdf
 
-[4] OECD. (2023). DeFi Liquidations Report. Retrieved from https://www.oecd.org/content/dam/oecd/en/publications/reports/2023/07/defi-liquidations_89cba79d/0524faaf-en.pdf
+[4] OECD. (2023). DeFi Liquidations Report. https://www.oecd.org/content/dam/oecd/en/publications/reports/2023/07/defi-liquidations_89cba79d/0524faaf-en.pdf
 
+# Setup
 
-# 2. Setup Guide
-
-
-## Environment Variables
+## Environment variables
 Create a `.env` file in the root directory with:
 ```bash
 INFURA_WEBSOCKET=wss://mainnet.infura.io/ws/v3/YOUR_PROJECT_ID
@@ -73,19 +66,17 @@ UNISWAP_POOL_ADDRESS=0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640  # USDC/ETH 0.05
 
 ## Installation
 ```bash
-
-# Install dependencies
 cargo build
 ```
 
 ## Configuration
-The project uses a TOML configuration file located at `src/config/config.toml`. You can modify:
+The project uses a TOML configuration file at `src/config/config.toml`:
 - Window sizes for volatility calculation
 - Exchange weights (CEX/DEX ratio)
 - Cleaning parameters
 - Output paths
 
-Default config looks like:
+Default config:
 ```toml
 [volatility]
 cex_weight = 0.7
@@ -105,19 +96,13 @@ max_volume = 1000.0
 
 ## Running
 ```bash
-
-# Run the project
 cargo run
 
-# The program will output several CSV files in the data/ directory:
+# Outputs CSV files in the data/ directory:
 # - kraken_trades.csv
 # - uniswap_trades.csv
 # - volatility.csv
 ```
 
 ## Monitoring
-The application uses tracing for logging
-- WebSocket connection status
-- Trade processing
-- Volatility calculations
-- Any errors or warnings
+Logging via `tracing`: websocket connection status, trade processing, volatility calculations, errors and warnings.
